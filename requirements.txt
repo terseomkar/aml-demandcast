@@ -1,5 +1,7 @@
 pandas
 numpy
+seaborn
+matplotlib
 scikit-learn
 mlflow
 streamlit
