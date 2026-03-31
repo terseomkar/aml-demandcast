@@ -1,6 +1,7 @@
 data/
 models/
 mlruns/
+mlartifacts/
 *.parquet
 .venv/
 
