@@ -19,6 +19,7 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
 from typing import Any
 from pandas.api.types import is_datetime64_any_dtype
+import datetime
 
 from src.features_skeleton import FEATURE_COLS
 
@@ -91,7 +92,12 @@ def train_and_log(model: Any, run_name: str, params: dict) -> str:
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
-    with mlflow.start_run(run_name=run_name) as run:
+    # include a timezone-aware UTC timestamp in the MLflow run name for traceability
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_name_ts = f"{run_name}_{ts}"
+    with mlflow.start_run(run_name=run_name_ts) as run:
+        # Timestamp marker for when this run logged metrics/artifacts (timezone-aware UTC)
+        mlflow.log_param("logged_at_utc", datetime.datetime.now(datetime.timezone.utc).isoformat())
         mlflow.log_params(params)
 
         # Fit model

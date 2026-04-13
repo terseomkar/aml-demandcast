@@ -9,6 +9,7 @@ import sys
 
 import mlflow
 import pandas as pd
+import datetime
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.base import clone
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
@@ -18,7 +19,8 @@ from sklearn.ensemble import RandomForestRegressor
 MLFLOW_TRACKING_URI = "http://localhost:5000"
 EXPERIMENT_NAME = "DemandCast"
 DATA_PATH = Path(__file__).parent / "data" / "features.parquet"
-VAL_CUTOFF = "2025-01-22"   # CV runs only on train+val — test set stays sealed
+VAL_CUTOFF = "2025-01-22"
+TEST_CUTOFF = "2025-02-01"   # sealed test period starts at this date (hour >= TEST_CUTOFF)
 TARGET = "demand"
 
 # import FEATURE_COLS used in train.py
@@ -37,7 +39,12 @@ def time_series_cv(model, X: pd.DataFrame, y: pd.Series, n_splits: int = 5, run_
     tscv = TimeSeriesSplit(n_splits=n_splits)
     results = []
 
-    with mlflow.start_run(run_name=run_name) as run:
+    # attach UTC timestamp to run name
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_name_ts = f"{run_name}_{ts}"
+    with mlflow.start_run(run_name=run_name_ts) as run:
+        # Timestamp marker for when this CV run logged metrics/artifacts (timezone-aware UTC)
+        mlflow.log_param("logged_at_utc", datetime.datetime.now(datetime.timezone.utc).isoformat())
         mlflow.log_param("model", type(model).__name__)
         mlflow.log_param("n_splits", n_splits)
 
@@ -95,9 +102,14 @@ if __name__ == "__main__":
 
     df = pd.read_parquet(DATA_PATH)
     df["hour"] = pd.to_datetime(df["hour"])
-    trainval = df[df["hour"] < pd.to_datetime(VAL_CUTOFF)].copy()
+
+    # Use train+val for CV (everything before the sealed test period)
+    trainval = df[df["hour"] < pd.to_datetime(TEST_CUTOFF)].copy()
     if trainval.empty:
-        raise ValueError("Train+val split is empty; check VAL_CUTOFF or data range")
+        raise ValueError(
+            f"Train+val split is empty; expected rows with hour < {TEST_CUTOFF}. "
+            "Check TEST_CUTOFF or the data range."
+        )
 
     # Sort by time to ensure correct temporal ordering for TimeSeriesSplit
     trainval = trainval.sort_values("hour").reset_index(drop=True)
@@ -111,7 +123,7 @@ if __name__ == "__main__":
     # default model (matches train.py's baseline)
     model = RandomForestRegressor(n_estimators=100, random_state=42)
 
-    print("Running time-series CV (n_splits=5) on train+val...")
+    print(f"Running time-series CV (n_splits=5) on train+val (data < {TEST_CUTOFF})...")
     results = time_series_cv(model=model, X=X_trainval, y=y_trainval, n_splits=5, run_name="cv_random_forest_100est")
 
     print("\nCV summary:")
