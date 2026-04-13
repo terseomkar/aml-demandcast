@@ -38,6 +38,31 @@ TARGET = "demand"
 N_TRIALS = 10
 
 
+def _sort_for_time_series_cv(X: pd.DataFrame, y: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
+    """Return X/y sorted in chronological order for TimeSeriesSplit.
+
+    TimeSeriesSplit uses row order only, so we must sort explicitly by the
+    original timestamp before generating folds.
+    """
+    if isinstance(X.index, pd.DatetimeIndex):
+        order = X.index.argsort()
+        return X.iloc[order], y.iloc[order]
+
+    timestamp_cols = [
+        col for col in ("timestamp", "datetime", "date", "ds")
+        if col in X.columns and pd.api.types.is_datetime64_any_dtype(X[col])
+    ]
+    if timestamp_cols:
+        sort_col = timestamp_cols[0]
+        ordered = X.assign(__target__=y).sort_values(sort_col, kind="stable")
+        return ordered.drop(columns="__target__"), ordered["__target__"]
+
+    raise ValueError(
+        "TimeSeriesSplit requires chronologically ordered samples, but no "
+        "datetime index or datetime timestamp column was found in X_train."
+    )
+
+
 def load_splits():
     """Load features.parquet and return train and validation splits.
 
@@ -78,6 +103,7 @@ def objective(trial: optuna.Trial) -> float:
 
     # --- Part 2: Load train (and val kept separate) ---
     X_train, y_train, X_val, y_val = load_splits()
+    X_train, y_train = _sort_for_time_series_cv(X_train, y_train)
 
     # Use TimeSeriesSplit CV on the training partition to get a robust objective
     tscv = TimeSeriesSplit(n_splits=5)
