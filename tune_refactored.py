@@ -187,7 +187,10 @@ if __name__ == "__main__":
     print(f"\nBest mean CV MAE (objective): {study.best_value:.4f}")
     print(f"Best params: {study.best_params}")
 
-    best_params = study.best_params
-    best_params.setdefault('random_state', RANDOM_STATE)
+    best_params = {
+        **study.best_params,
+        "random_state": RANDOM_STATE,
+        "n_jobs": -1,
+    }
     # Retrain and register
     retrain_and_register(best_params, stage="Production")
