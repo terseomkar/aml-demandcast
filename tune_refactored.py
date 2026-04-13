@@ -134,6 +134,7 @@ def retrain_and_register(best_params: dict, stage: str = "Production") -> None:
     evaluate on test, log test metrics, and register the final model.
     """
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
     df = pd.read_parquet(DATA_PATH)
     df["hour"] = pd.to_datetime(df["hour"]).dt.hour
 
