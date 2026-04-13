@@ -17,8 +17,6 @@ import optuna
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.base import clone
-from typing import Any
 import datetime
 
 from src.features_skeleton import FEATURE_COLS
