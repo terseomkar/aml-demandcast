@@ -106,7 +106,10 @@ if __name__ == "__main__":
     # Use train+val for CV (everything before the sealed test period)
     trainval = df[df["hour"] < pd.to_datetime(TEST_CUTOFF)].copy()
     if trainval.empty:
-        raise ValueError("Train+val split is empty; check VAL_CUTOFF/TEST_CUTOFF or data range")
+        raise ValueError(
+            f"Train+val split is empty; expected rows with hour < {TEST_CUTOFF}. "
+            "Check TEST_CUTOFF or the data range."
+        )
 
     # Sort by time to ensure correct temporal ordering for TimeSeriesSplit
     trainval = trainval.sort_values("hour").reset_index(drop=True)
