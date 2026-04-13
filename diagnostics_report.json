@@ -1,0 +1,60 @@
+{
+  "logged_at_utc": "2026-03-31T20:49:39.367676+00:00",
+  "eval": {
+    "n_test_rows": 1,
+    "test_mae": 74.61551104795913,
+    "test_rmse": 74.61551104795913,
+    "test_r2": NaN,
+    "preds_sample_head": [
+      {
+        "PULocationID": 113,
+        "y": 1,
+        "pred": 75.61551104795913
+      }
+    ]
+  },
+  "baselines": {
+    "mae_demand_lag_1h": 102.0,
+    "mae_demand_lag_24h": 33.0
+  },
+  "distribution": {
+    "trainval": {
+      "count": 41830,
+      "demand_mean": 53.441620846282575,
+      "demand_std": 81.30764629601433,
+      "demand_25": 3.0,
+      "demand_50": 15.0,
+      "demand_75": 75.0
+    },
+    "test": {
+      "count": 1,
+      "demand_mean": 1.0,
+      "demand_std": NaN,
+      "demand_25": 1.0,
+      "demand_50": 1.0,
+      "demand_75": 1.0
+    }
+  },
+  "per_zone": {
+    "top_zone_mae": [
+      {
+        "PULocationID": 113,
+        "abs_err": 74.61551104795913
+      }
+    ]
+  },
+  "lag_checks": {
+    "demand_lag_1h": {
+      "notna_count": 1,
+      "notna_pct": 100.0
+    },
+    "demand_lag_24h": {
+      "notna_count": 1,
+      "notna_pct": 100.0
+    },
+    "demand_lag_168h": {
+      "notna_count": 1,
+      "notna_pct": 100.0
+    }
+  }
+}

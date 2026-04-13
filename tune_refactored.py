@@ -1,12 +1,13 @@
 """
-tune.py — Hyperparameter tuning for DemandCast (Optuna + MLflow)
-===============================================================
-Runs an Optuna study to tune a RandomForestRegressor on the train/val
-split. Each trial is logged to MLflow; the best run can be registered
-to the MLflow Model Registry.
+tune_refactored.py — Hyperparameter tuning for DemandCast (Optuna + MLflow)
+=====================================================================
+This refactor uses random splits for train/val/test (70%/20%/10%) and
+uses regular K-Fold cross-validation (with shuffling) instead of
+TimeSeriesSplit. Everything else mirrors `tune.py` so you can compare
+results quickly.
 
 Run from project root with the `.venv` active:
-    python tune.py
+    python tune_refactored.py
 """
 from pathlib import Path
 import mlflow
@@ -16,9 +17,7 @@ import numpy as np
 import optuna
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.base import clone
-from typing import Any
+from sklearn.model_selection import KFold, train_test_split
 import datetime
 
 from src.features_skeleton import FEATURE_COLS
@@ -33,38 +32,44 @@ EXPERIMENT_NAME = "DemandCast"
 MODEL_REGISTRY_NAME = "DemandCast"
 
 DATA_PATH = Path(__file__).parent / "data" / "features.parquet"
-VAL_CUTOFF = "2025-01-22"
-TEST_CUTOFF = "2025-02-01"
 TARGET = "demand"
 
 N_TRIALS = 10
+RANDOM_STATE = 42
 
 
 def load_splits():
-    """Load features.parquet and return train and validation splits.
+    """Load features.parquet and return random train/val/test splits.
 
-    Returns
-    -------
-    X_train, y_train, X_val, y_val
+    Splits: train 70%, val 20%, test 10% (random, reproducible via
+    `RANDOM_STATE`). Returns X_train, y_train, X_val, y_val.
     """
     if not DATA_PATH.exists():
         raise FileNotFoundError(f"Features file not found: {DATA_PATH}")
 
     df = pd.read_parquet(DATA_PATH)
-    df["hour"] = pd.to_datetime(df["hour"])
+    # Keep hour as integer (consistent with preprocessing used elsewhere)
+    df["hour"] = pd.to_datetime(df["hour"]).dt.hour
 
-    train = df[df["hour"] < pd.to_datetime(VAL_CUTOFF)].copy()
-    val = df[(df["hour"] >= pd.to_datetime(VAL_CUTOFF)) & (df["hour"] < pd.to_datetime(TEST_CUTOFF))].copy()
+    X = df[FEATURE_COLS]
+    y = df[TARGET]
 
-    # convert hour to integer (consistent with train.py preprocessing)
-    train["hour"] = train["hour"].dt.hour
-    val["hour"] = val["hour"].dt.hour
+    # Step 1: hold out test (10%)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y, test_size=0.10, random_state=RANDOM_STATE, shuffle=True
+    )
 
-    return train[FEATURE_COLS], train[TARGET], val[FEATURE_COLS], val[TARGET]
+    # From remaining 90%, take validation = 20% overall → 20/90 ≈ 0.22222
+    val_frac_of_temp = 0.20 / 0.90
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=val_frac_of_temp, random_state=RANDOM_STATE, shuffle=True
+    )
+
+    return X_train, y_train, X_val, y_val
 
 
 def objective(trial: optuna.Trial) -> float:
-    """Optuna objective: suggest hyperparams, run TimeSeriesSplit CV on `train`,
+    """Optuna objective: suggest hyperparams, run KFold CV on `train`,
     log per-fold metrics to MLflow, and return the mean CV MAE (minimize).
     """
     # --- Part 1: Search space ---
@@ -74,15 +79,15 @@ def objective(trial: optuna.Trial) -> float:
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 20),
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", 0.5]),
-        "random_state": 42,
+        "random_state": RANDOM_STATE,
         "n_jobs": -1,
     }
 
-    # --- Part 2: Load train (and val kept separate) ---
+    # --- Part 2: Load train (val/test kept separate) ---
     X_train, y_train, X_val, y_val = load_splits()
 
-    # Use TimeSeriesSplit CV on the training partition to get a robust objective
-    tscv = TimeSeriesSplit(n_splits=5)
+    # Use regular K-Fold CV (with shuffling) on the training partition
+    kf = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
     fold_maes = []
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -92,12 +97,11 @@ def objective(trial: optuna.Trial) -> float:
     ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_name_ts = f"{run_name}_{ts}"
     with mlflow.start_run(run_name=run_name_ts) as run:
-        # Timestamp marker for when this trial logged metrics/artifacts (timezone-aware UTC)
         mlflow.log_param("logged_at_utc", datetime.datetime.now(datetime.timezone.utc).isoformat())
         mlflow.log_params(params)
-        mlflow.log_param("objective", "tscv_train")
+        mlflow.log_param("objective", "kfold_train")
 
-        for fold, (train_idx, test_idx) in enumerate(tscv.split(X_train), start=1):
+        for fold, (train_idx, test_idx) in enumerate(kf.split(X_train), start=1):
             X_tr, X_te = X_train.iloc[train_idx], X_train.iloc[test_idx]
             y_tr, y_te = y_train.iloc[train_idx], y_train.iloc[test_idx]
 
@@ -126,52 +130,37 @@ def objective(trial: optuna.Trial) -> float:
 
 
 def retrain_and_register(best_params: dict, stage: str = "Production") -> None:
-    """Retrain the chosen hyperparameters on train+val, evaluate on test,
-    log test metrics, and register the final model to the Model Registry.
+    """Retrain the chosen hyperparameters on train+val (random split),
+    evaluate on test, log test metrics, and register the final model.
     """
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    # Load full train+val and test splits
     df = pd.read_parquet(DATA_PATH)
-    df["hour"] = pd.to_datetime(df["hour"])
+    df["hour"] = pd.to_datetime(df["hour"]).dt.hour
 
-    trainval = df[df["hour"] < pd.to_datetime(TEST_CUTOFF)].copy()
-    test = df[df["hour"] >= pd.to_datetime(TEST_CUTOFF)].copy()
+    # Split randomly: test 10%, trainval 90%
+    X = df[FEATURE_COLS]
+    y = df[TARGET]
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
+        X, y, test_size=0.10, random_state=RANDOM_STATE, shuffle=True
+    )
 
-    if trainval.empty:
+    if X_trainval.empty:
         raise ValueError("Train+val split is empty; cannot retrain final model")
 
-    # Prepare data
-    trainval["hour"] = trainval["hour"].dt.hour
-    X_trainval = trainval[FEATURE_COLS]
-    y_trainval = trainval[TARGET]
-
-    if test.empty:
-        print("Warning: Test split is empty; registering model without test evaluation")
-        X_test = None
-        y_test = None
-    else:
-        test["hour"] = test["hour"].dt.hour
-        X_test = test[FEATURE_COLS]
-        y_test = test[TARGET]
-
-    # Retrain final model on train+val
     final_model = RandomForestRegressor(**best_params)
     final_model.fit(X_trainval, y_trainval)
 
-    # Start an MLflow run to log final model + test metrics
     ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_name_final = f"final_retrain_and_register_{ts}"
     with mlflow.start_run(run_name=run_name_final) as run:
-        # Timestamp marker for when the final retrain and registration happened (timezone-aware UTC)
         mlflow.log_param("logged_at_utc", datetime.datetime.now(datetime.timezone.utc).isoformat())
         mlflow.log_params(best_params)
-        if X_test is not None:
+        if X_test is not None and not X_test.empty:
             test_preds = final_model.predict(X_test)
             test_mae = float(mean_absolute_error(y_test, test_preds))
             mlflow.log_metric("test_mae", test_mae)
             print(f"Final test_mae: {test_mae:.4f}")
 
-        # Log and register model
         mlflow.sklearn.log_model(final_model, "model")
         model_uri = f"runs:/{run.info.run_id}/model"
         registered = mlflow.register_model(model_uri, MODEL_REGISTRY_NAME)
@@ -198,9 +187,7 @@ if __name__ == "__main__":
     print(f"\nBest mean CV MAE (objective): {study.best_value:.4f}")
     print(f"Best params: {study.best_params}")
 
-    # Retrain the best configuration on train+val and register the final model
     best_params = study.best_params
-    # Ensure keys like 'n_jobs' and 'random_state' exist to control behavior
-    best_params.setdefault('random_state', 42)
+    best_params.setdefault('random_state', RANDOM_STATE)
     # Retrain and register
     retrain_and_register(best_params, stage="Production")

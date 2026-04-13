@@ -1,6 +1,7 @@
 data/
 models/
 mlruns/
+diagnostics.py
 mlartifacts/
 *.parquet
 .venv/
