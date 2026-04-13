@@ -5,6 +5,8 @@ diagnostics.py
 mlartifacts/
 *.parquet
 .venv/
+mlflow.db
+diagnostics_report.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
