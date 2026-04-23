@@ -106,7 +106,7 @@ st.metric(label=f"Predicted demand — Zone {zone}, {hour:02d}:00", value=f"{pre
 # ---------------------------------------------------------------------------
 st.markdown("---")
 with st.expander("Model accuracy and context (validation)"):
-    # try to fetch best val_mae from MLflow experiment
+    
     try:
         exp = mlflow.get_experiment_by_name("DemandCast")
         if exp is not None:
